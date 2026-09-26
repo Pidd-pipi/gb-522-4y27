@@ -9,12 +9,27 @@ import { useRouteStore } from '@/stores/routes'
 import { useTraceStore } from '@/stores/traces'
 import { useAuth } from '@/hooks/useAuth'
 import { CASE_STATUSES, caseStatusLabel, type LocalizationCase } from '@/types/case'
+import type { TraceCapture } from '@/types/domain'
 
 const cases = useCaseStore(); const routes = useRouteStore(); const traces = useTraceStore(); const auth = useAuth(); const status = ref(''); const createOpen = ref(false); const reviewOpen = ref(false); const current = ref<LocalizationCase | null>(null); const busy = ref(false)
 const form = reactive({ route_id: 0, baseline_trace_id: 0, current_trace_id: 0, distance_tolerance_m: 25, loss_increase_db: 0.5 })
 const routeTraces = computed(() => traces.items.filter((item) => item.route_id === form.route_id))
+const baselineTrace = computed(() => traces.items.find((item) => item.id === form.baseline_trace_id))
+const currentTrace = computed(() => traces.items.find((item) => item.id === form.current_trace_id))
+const conditionChecks = computed(() => {
+  const baseline = baselineTrace.value; const current = currentTrace.value
+  if (!baseline || !current || baseline.id === current.id) return []
+  return [
+    { label: '波长', baseline: `${baseline.wavelength_nm} nm`, current: `${current.wavelength_nm} nm`, ok: baseline.wavelength_nm === current.wavelength_nm },
+    { label: '脉宽', baseline: `${baseline.pulse_width_ns} ns`, current: `${current.pulse_width_ns} ns`, ok: baseline.pulse_width_ns === current.pulse_width_ns },
+    { label: '采样间隔', baseline: `${baseline.sample_interval_ns} ns`, current: `${current.sample_interval_ns} ns`, ok: baseline.sample_interval_ns === current.sample_interval_ns },
+    { label: '采集时间', baseline: new Date(baseline.captured_at).toLocaleString(), current: new Date(current.captured_at).toLocaleString(), ok: new Date(current.captured_at).getTime() > new Date(baseline.captured_at).getTime() },
+  ]
+})
+const conditionsCompatible = computed(() => conditionChecks.value.length > 0 && conditionChecks.value.every((check) => check.ok))
 async function search() { await cases.fetch({ status: status.value || undefined, page_size: 100 }) }
 function chooseRoute() { const route = routes.items.find((item)=>item.id===form.route_id); form.baseline_trace_id = route?.baseline_trace_id ?? 0; form.current_trace_id = routeTraces.value.find((trace)=>trace.id !== form.baseline_trace_id)?.id ?? 0 }
+function traceOptionLabel(trace: TraceCapture) { return `#${trace.id} / ${trace.wavelength_nm} nm / ${trace.pulse_width_ns} ns / ${new Date(trace.captured_at).toLocaleString()}` }
 async function create() { busy.value=true; try { await cases.create(form); createOpen.value=false; ElMessage.success('定位案例已建立') } finally { busy.value=false } }
 async function analyze(item: LocalizationCase) { busy.value=true; try { await cases.analyze(item.id, {}); ElMessage.success('基线差异分析已完成') } finally { busy.value=false } }
 function confirm(item: LocalizationCase) { current.value=item; reviewOpen.value=true }
@@ -40,10 +55,57 @@ onMounted(async()=>{ await Promise.all([routes.fetch({page_size:100}),traces.fet
       </el-table>
     </div>
   </section>
-  <el-dialog v-model="createOpen" title="建立基线对比案例" width="min(620px, calc(100vw - 28px))"><el-form label-position="top"><el-form-item label="线路"><el-select v-model="form.route_id" style="width:100%" @change="chooseRoute"><el-option v-for="route in routes.items" :key="route.id" :label="`${route.route_code} / ${route.name}`" :value="route.id" /></el-select></el-form-item><div class="case-form-grid"><el-form-item label="基线轨迹"><el-select v-model="form.baseline_trace_id" style="width:100%"><el-option v-for="trace in routeTraces" :key="trace.id" :label="`#${trace.id} / ${trace.wavelength_nm}nm`" :value="trace.id" /></el-select></el-form-item><el-form-item label="当前轨迹"><el-select v-model="form.current_trace_id" style="width:100%"><el-option v-for="trace in routeTraces" :key="trace.id" :label="`#${trace.id} / ${trace.wavelength_nm}nm`" :value="trace.id" /></el-select></el-form-item><el-form-item label="距离容差 m"><el-input-number v-model="form.distance_tolerance_m" :min="0.1" :max="1000" style="width:100%" /></el-form-item><el-form-item label="损耗增量阈值 dB"><el-input-number v-model="form.loss_increase_db" :min="0.1" :max="20" :step="0.1" style="width:100%" /></el-form-item></div></el-form><template #footer><el-button @click="createOpen=false">取消</el-button><el-button type="primary" :loading="busy" :disabled="!form.route_id || !form.baseline_trace_id || !form.current_trace_id || form.baseline_trace_id===form.current_trace_id" @click="create">建立案例</el-button></template></el-dialog>
+  <el-dialog v-model="createOpen" title="建立基线对比案例" width="min(680px, calc(100vw - 28px))">
+    <el-form label-position="top">
+      <el-form-item label="线路">
+        <el-select v-model="form.route_id" style="width:100%" @change="chooseRoute">
+          <el-option v-for="route in routes.items" :key="route.id" :label="`${route.route_code} / ${route.name}`" :value="route.id" />
+        </el-select>
+      </el-form-item>
+      <div class="case-form-grid">
+        <el-form-item label="基线轨迹">
+          <el-select v-model="form.baseline_trace_id" style="width:100%">
+            <el-option v-for="trace in routeTraces" :key="trace.id" :label="traceOptionLabel(trace)" :value="trace.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="当前轨迹">
+          <el-select v-model="form.current_trace_id" style="width:100%">
+            <el-option v-for="trace in routeTraces" :key="trace.id" :label="traceOptionLabel(trace)" :value="trace.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="距离容差 m"><el-input-number v-model="form.distance_tolerance_m" :min="0.1" :max="1000" style="width:100%" /></el-form-item>
+        <el-form-item label="损耗增量阈值 dB"><el-input-number v-model="form.loss_increase_db" :min="0.1" :max="20" :step="0.1" style="width:100%" /></el-form-item>
+      </div>
+    </el-form>
+    <div v-if="conditionChecks.length" class="condition-panel">
+      <div class="condition-row condition-head">
+        <span>测量条件</span><span>基线 #{{ form.baseline_trace_id }}</span><span>当前 #{{ form.current_trace_id }}</span><span>核对</span>
+      </div>
+      <div v-for="check in conditionChecks" :key="check.label" class="condition-row">
+        <span class="condition-label">{{ check.label }}</span>
+        <span class="condition-value" :title="check.baseline">{{ check.baseline }}</span>
+        <span class="condition-value" :title="check.current">{{ check.current }}</span>
+        <span class="condition-tag" :class="check.ok ? 'pass' : 'fail'">{{ check.ok ? '符合' : '不符' }}</span>
+      </div>
+      <el-alert v-if="!conditionsCompatible" type="error" :closable="false" show-icon title="测量条件不一致，无法建立案例：请改用波长、脉宽、采样间隔相同且采集时间晚于基线的当前轨迹。" />
+    </div>
+    <template #footer>
+      <el-button @click="createOpen=false">取消</el-button>
+      <el-button type="primary" :loading="busy" :disabled="!conditionsCompatible" @click="create">建立案例</el-button>
+    </template>
+  </el-dialog>
   <ReviewDialog v-model="reviewOpen" mode="case" :case-item="current" :loading="busy" @submit="submitReview" />
 </template>
 
 <style scoped>
-.case-toolbar{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:14px}.state-track{display:flex;align-items:center;overflow:auto}.state-track span{display:flex;align-items:center;gap:6px;color:var(--text-muted);font-size:11px;font-weight:700;white-space:nowrap}.state-track span:not(:last-child)::after{content:'';width:24px;height:1px;margin:0 7px;background:var(--line-strong)}.state-track i{width:20px;height:20px;display:grid;place-items:center;border:1px solid var(--line-strong);border-radius:50%;font-style:normal}.trace-pair{display:inline-flex;align-items:center;gap:6px}.uncertainty{display:block;margin-top:2px;color:var(--text-muted)}.conclusion{display:-webkit-box;overflow:hidden;-webkit-line-clamp:2;-webkit-box-orient:vertical}.muted{color:var(--text-muted);font-size:12px}.case-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 14px}@media(max-width:700px){.case-toolbar{align-items:stretch;flex-direction:column}.case-form-grid{grid-template-columns:1fr}}
+.case-toolbar{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:14px}.state-track{display:flex;align-items:center;overflow:auto}.state-track span{display:flex;align-items:center;gap:6px;color:var(--text-muted);font-size:11px;font-weight:700;white-space:nowrap}.state-track span:not(:last-child)::after{content:'';width:24px;height:1px;margin:0 7px;background:var(--line-strong)}.state-track i{width:20px;height:20px;display:grid;place-items:center;border:1px solid var(--line-strong);border-radius:50%;font-style:normal}.trace-pair{display:inline-flex;align-items:center;gap:6px}.uncertainty{display:block;margin-top:2px;color:var(--text-muted)}.conclusion{display:-webkit-box;overflow:hidden;-webkit-line-clamp:2;-webkit-box-orient:vertical}.muted{color:var(--text-muted);font-size:12px}.case-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 14px}
+.condition-panel{display:flex;flex-direction:column;gap:8px;margin-top:2px;padding:12px 14px;border:1px solid var(--line);background:var(--surface-strong)}
+.condition-row{display:grid;grid-template-columns:64px 1fr 1fr 56px;align-items:center;gap:10px;font-size:12px}
+.condition-head{color:var(--text-muted);font-weight:700}
+.condition-label{font-weight:700;color:var(--text)}
+.condition-value{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.condition-tag{display:inline-flex;align-items:center;justify-content:center;min-height:22px;padding:1px 6px;border:1px solid;border-radius:3px;font-size:11px;font-weight:700}
+.condition-tag.pass{color:#17604e;border-color:#9dcebd;background:#e8f4f0}
+.condition-tag.fail{color:var(--danger);border-color:#d8a9a4;background:#f9ebe9}
+@media(max-width:700px){.case-toolbar{align-items:stretch;flex-direction:column}.case-form-grid{grid-template-columns:1fr}.condition-row{grid-template-columns:52px 1fr 1fr 48px;gap:6px;font-size:11px}}
 </style>

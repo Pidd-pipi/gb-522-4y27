@@ -25,14 +25,23 @@ func (s *CaseService) Create(request dto.CreateCaseRequest, actor Actor) (model.
 	if request.BaselineTraceID == request.CurrentTraceID {
 		return model.LocalizationCase{}, invalid("baseline and current traces must differ", nil)
 	}
+	traces := make([]model.TraceCapture, 0, 2)
 	for _, traceID := range []uint{request.BaselineTraceID, request.CurrentTraceID} {
-		belongs, err := s.store.Traces.BelongsToRoute(traceID, request.RouteID)
+		trace, err := s.store.Traces.Get(traceID)
+		if errors.Is(err, repository.ErrNotFound) {
+			return model.LocalizationCase{}, invalid("both traces must belong to the selected route", nil)
+		}
 		if err != nil {
 			return model.LocalizationCase{}, internal("validate case traces failed", err)
 		}
-		if !belongs {
+		if trace.RouteID != request.RouteID {
 			return model.LocalizationCase{}, invalid("both traces must belong to the selected route", nil)
 		}
+		traces = append(traces, trace)
+	}
+	compatibility := algorithm.CheckTraceCompatibility(traceConditions(traces[0]), traceConditions(traces[1]))
+	if !compatibility.Compatible {
+		return model.LocalizationCase{}, invalid("trace measurement conditions are not comparable: "+compatibility.FailureSummary(), nil)
 	}
 	tolerance := request.DistanceToleranceM
 	if tolerance == 0 {
@@ -48,12 +57,16 @@ func (s *CaseService) Create(request dto.CreateCaseRequest, actor Actor) (model.
 		if err := tx.Cases.Create(&item); err != nil {
 			return err
 		}
-		return tx.Audits.Create(audit(actor, "case.created", "LocalizationCase", item.ID, &item.RouteID, "{}", snapshot(item)))
+		return tx.Audits.Create(audit(actor, "case.created", "LocalizationCase", item.ID, &item.RouteID, "{}", snapshot(map[string]any{"case": item, "compatibility": compatibility})))
 	})
 	if err != nil {
 		return item, internal("create case failed", err)
 	}
 	return item, nil
+}
+
+func traceConditions(trace model.TraceCapture) algorithm.TraceConditions {
+	return algorithm.TraceConditions{WavelengthNM: trace.WavelengthNM, PulseWidthNS: trace.PulseWidthNS, SampleIntervalNS: trace.SampleIntervalNS, CapturedAt: trace.CapturedAt}
 }
 
 func (s *CaseService) List(query dto.CaseQuery) ([]model.LocalizationCase, dto.Pagination, error) {

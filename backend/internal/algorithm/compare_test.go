@@ -1,6 +1,59 @@
 package algorithm
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+func TestCheckTraceCompatibilityTable(t *testing.T) {
+	captured := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
+	baseline := TraceConditions{WavelengthNM: 1550, PulseWidthNS: 100, SampleIntervalNS: 0.5, CapturedAt: captured}
+	later := captured.Add(time.Hour)
+	tests := []struct {
+		name       string
+		current    TraceConditions
+		compatible bool
+		summary    string
+	}{
+		{"matching conditions and newer capture", TraceConditions{WavelengthNM: 1550, PulseWidthNS: 100, SampleIntervalNS: 0.5, CapturedAt: later}, true, ""},
+		{"wavelength mismatch", TraceConditions{WavelengthNM: 1310, PulseWidthNS: 100, SampleIntervalNS: 0.5, CapturedAt: later}, false, "wavelength differs (baseline 1550 nm, current 1310 nm)"},
+		{"pulse width mismatch", TraceConditions{WavelengthNM: 1550, PulseWidthNS: 200, SampleIntervalNS: 0.5, CapturedAt: later}, false, "pulse width differs (baseline 100 ns, current 200 ns)"},
+		{"sample interval mismatch", TraceConditions{WavelengthNM: 1550, PulseWidthNS: 100, SampleIntervalNS: 1, CapturedAt: later}, false, "sample interval differs (baseline 0.5 ns, current 1 ns)"},
+		{"current captured before baseline", TraceConditions{WavelengthNM: 1550, PulseWidthNS: 100, SampleIntervalNS: 0.5, CapturedAt: captured.Add(-time.Hour)}, false, "current trace captured at 2026-09-01T07:00:00Z is not later than the baseline capture at 2026-09-01T08:00:00Z"},
+		{"same capture instant rejected", TraceConditions{WavelengthNM: 1550, PulseWidthNS: 100, SampleIntervalNS: 0.5, CapturedAt: captured}, false, "current trace captured at 2026-09-01T08:00:00Z is not later than the baseline capture at 2026-09-01T08:00:00Z"},
+		{"multiple failures itemized", TraceConditions{WavelengthNM: 1310, PulseWidthNS: 200, SampleIntervalNS: 0.5, CapturedAt: captured}, false, "wavelength differs (baseline 1550 nm, current 1310 nm); pulse width differs (baseline 100 ns, current 200 ns); current trace captured at 2026-09-01T08:00:00Z is not later than the baseline capture at 2026-09-01T08:00:00Z"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := CheckTraceCompatibility(baseline, test.current)
+			if len(result.Checks) != 4 {
+				t.Fatalf("got %d checks, want 4", len(result.Checks))
+			}
+			if result.Compatible != test.compatible {
+				t.Fatalf("compatible = %v, want %v (checks: %#v)", result.Compatible, test.compatible, result.Checks)
+			}
+			if summary := result.FailureSummary(); summary != test.summary {
+				t.Fatalf("summary = %q, want %q", summary, test.summary)
+			}
+		})
+	}
+}
+
+func TestCheckTraceCompatibilityReportsPerField(t *testing.T) {
+	captured := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
+	baseline := TraceConditions{WavelengthNM: 1550, PulseWidthNS: 100, SampleIntervalNS: 0.5, CapturedAt: captured}
+	current := TraceConditions{WavelengthNM: 1550, PulseWidthNS: 100, SampleIntervalNS: 0.5, CapturedAt: captured.Add(time.Hour)}
+	result := CheckTraceCompatibility(baseline, current)
+	wantFields := []string{"wavelength_nm", "pulse_width_ns", "sample_interval_ns", "capture_order"}
+	for i, field := range wantFields {
+		if result.Checks[i].Field != field {
+			t.Fatalf("check %d field = %s, want %s", i, result.Checks[i].Field, field)
+		}
+		if !result.Checks[i].Compatible {
+			t.Fatalf("check %s must pass for identical conditions", field)
+		}
+	}
+}
 
 func TestCompareBaselineTable(t *testing.T) {
 	tests := []struct {

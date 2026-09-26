@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
+	"strings"
+	"time"
 )
 
 type ComparableEvent struct {
@@ -81,4 +84,70 @@ func PrimaryDifference(differences []Difference) (distance, uncertainty float64,
 		}
 	}
 	return best.DistanceM, math.Max(1, 20*(1-best.Confidence)), true
+}
+
+// TraceConditions captures the acquisition parameters that decide whether two
+// traces may be compared at all.
+type TraceConditions struct {
+	WavelengthNM     int
+	PulseWidthNS     float64
+	SampleIntervalNS float64
+	CapturedAt       time.Time
+}
+
+// CompatibilityCheck reports one applicability criterion for a trace pair.
+type CompatibilityCheck struct {
+	Field         string `json:"field"`
+	BaselineValue string `json:"baseline_value"`
+	CurrentValue  string `json:"current_value"`
+	Compatible    bool   `json:"compatible"`
+}
+
+// CompatibilityResult aggregates the per-field applicability checks.
+type CompatibilityResult struct {
+	Checks     []CompatibilityCheck `json:"checks"`
+	Compatible bool                 `json:"compatible"`
+}
+
+// CheckTraceCompatibility verifies that two captures share wavelength, pulse
+// width, and sampling interval, and that the current capture is newer than the
+// baseline. Traces recorded under different conditions are not comparable:
+// equal sample positions would map to different fiber locations or resolutions.
+func CheckTraceCompatibility(baseline, current TraceConditions) CompatibilityResult {
+	checks := []CompatibilityCheck{
+		{Field: "wavelength_nm", BaselineValue: strconv.Itoa(baseline.WavelengthNM), CurrentValue: strconv.Itoa(current.WavelengthNM), Compatible: baseline.WavelengthNM == current.WavelengthNM},
+		{Field: "pulse_width_ns", BaselineValue: formatCondition(baseline.PulseWidthNS), CurrentValue: formatCondition(current.PulseWidthNS), Compatible: baseline.PulseWidthNS == current.PulseWidthNS},
+		{Field: "sample_interval_ns", BaselineValue: formatCondition(baseline.SampleIntervalNS), CurrentValue: formatCondition(current.SampleIntervalNS), Compatible: baseline.SampleIntervalNS == current.SampleIntervalNS},
+		{Field: "capture_order", BaselineValue: baseline.CapturedAt.UTC().Format(time.RFC3339), CurrentValue: current.CapturedAt.UTC().Format(time.RFC3339), Compatible: current.CapturedAt.After(baseline.CapturedAt)},
+	}
+	result := CompatibilityResult{Checks: checks, Compatible: true}
+	for _, check := range checks {
+		result.Compatible = result.Compatible && check.Compatible
+	}
+	return result
+}
+
+// FailureSummary explains every failed check, one clause per item.
+func (r CompatibilityResult) FailureSummary() string {
+	clauses := make([]string, 0, len(r.Checks))
+	for _, check := range r.Checks {
+		if check.Compatible {
+			continue
+		}
+		switch check.Field {
+		case "wavelength_nm":
+			clauses = append(clauses, fmt.Sprintf("wavelength differs (baseline %s nm, current %s nm)", check.BaselineValue, check.CurrentValue))
+		case "pulse_width_ns":
+			clauses = append(clauses, fmt.Sprintf("pulse width differs (baseline %s ns, current %s ns)", check.BaselineValue, check.CurrentValue))
+		case "sample_interval_ns":
+			clauses = append(clauses, fmt.Sprintf("sample interval differs (baseline %s ns, current %s ns)", check.BaselineValue, check.CurrentValue))
+		default:
+			clauses = append(clauses, fmt.Sprintf("current trace captured at %s is not later than the baseline capture at %s", check.CurrentValue, check.BaselineValue))
+		}
+	}
+	return strings.Join(clauses, "; ")
+}
+
+func formatCondition(value float64) string {
+	return strconv.FormatFloat(value, 'f', -1, 64)
 }
