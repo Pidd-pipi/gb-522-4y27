@@ -1,7 +1,7 @@
 import { api } from './client'
 import type { ApiEnvelope, AuditLog, FiberRoute, TraceCapture, TraceEnvelope, User } from '@/types/domain'
 import type { EventMarker, EventType } from '@/types/event'
-import type { LocalizationCase } from '@/types/case'
+import type { LocalizationCase, CaseCompatibility } from '@/types/case'
 
 export const authApi = { login: (body: { username: string; password: string }) => api.post<ApiEnvelope<{ token: string; expires_at: string; user: User }>>('/auth/login', body) }
 export const routeApi = {
@@ -24,6 +24,7 @@ export const eventApi = {
 export const caseApi = {
   list: (params?: object) => api.get<ApiEnvelope<LocalizationCase[]>>('/cases', { params }),
   create: (body: object) => api.post<ApiEnvelope<LocalizationCase>>('/cases', body),
+  compatibility: (body: object) => api.post<ApiEnvelope<CaseCompatibility>>('/cases/compatibility-check', body),
   detail: (id: number) => api.get<ApiEnvelope<{ case: LocalizationCase; differences: object[] }>>(`/cases/${id}`),
   analyze: (id: number, body: object) => api.post<ApiEnvelope<LocalizationCase>>(`/cases/${id}/analyze`, body),
   confirm: (id: number, body: object) => api.post<ApiEnvelope<LocalizationCase>>(`/cases/${id}/confirm`, body),

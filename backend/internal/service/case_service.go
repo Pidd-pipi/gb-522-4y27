@@ -25,14 +25,13 @@ func (s *CaseService) Create(request dto.CreateCaseRequest, actor Actor) (model.
 	if request.BaselineTraceID == request.CurrentTraceID {
 		return model.LocalizationCase{}, invalid("baseline and current traces must differ", nil)
 	}
-	for _, traceID := range []uint{request.BaselineTraceID, request.CurrentTraceID} {
-		belongs, err := s.store.Traces.BelongsToRoute(traceID, request.RouteID)
-		if err != nil {
-			return model.LocalizationCase{}, internal("validate case traces failed", err)
-		}
-		if !belongs {
-			return model.LocalizationCase{}, invalid("both traces must belong to the selected route", nil)
-		}
+	baseline, current, err := s.loadCaseTraces(request.RouteID, request.BaselineTraceID, request.CurrentTraceID)
+	if err != nil {
+		return model.LocalizationCase{}, err
+	}
+	compatibility := buildCompatibilityResponse(baseline, current)
+	if !compatibility.Compatible {
+		return model.LocalizationCase{}, incompatibleConditionsError(compatibility)
 	}
 	tolerance := request.DistanceToleranceM
 	if tolerance == 0 {
@@ -44,7 +43,7 @@ func (s *CaseService) Create(request dto.CreateCaseRequest, actor Actor) (model.
 	}
 	params, _ := json.Marshal(dto.CaseParameters{DistanceToleranceM: tolerance, LossIncreaseDB: loss})
 	item := model.LocalizationCase{RouteID: request.RouteID, BaselineTraceID: request.BaselineTraceID, CurrentTraceID: request.CurrentTraceID, CaseStatus: constants.CaseDraft, ParametersJSON: datatypes.JSON(params), DifferencesJSON: datatypes.JSON([]byte("[]")), Version: 1, CreatedBy: actor.ID}
-	err := s.store.Transaction(func(tx *repository.Store) error {
+	err = s.store.Transaction(func(tx *repository.Store) error {
 		if err := tx.Cases.Create(&item); err != nil {
 			return err
 		}
@@ -149,7 +148,7 @@ func (s *CaseService) Analyze(id uint, request dto.AnalyzeCaseRequest, actor Act
 			}
 			return tx.Audits.Create(audit(actor, "case.analysis_failed", "LocalizationCase", item.ID, &item.RouteID, "{}", snapshot(map[string]any{"error": analysisErr.Error()})))
 		})
-		return item, &AppError{CodeAlgorithmInput, http.StatusUnprocessableEntity, "case analysis could not be completed", analysisErr}
+		return item, &AppError{Code: CodeAlgorithmInput, Status: http.StatusUnprocessableEntity, Message: "case analysis could not be completed", Err: analysisErr}
 	}
 	encoded, _ := json.Marshal(differences)
 	params, _ := json.Marshal(dto.CaseParameters{DistanceToleranceM: tolerance, LossIncreaseDB: loss})
@@ -195,7 +194,7 @@ func (s *CaseService) compareEvents(item model.LocalizationCase, tolerance, loss
 
 func (s *CaseService) Confirm(id uint, request dto.ConfirmCaseRequest, actor Actor) (model.LocalizationCase, error) {
 	if actor.Role != constants.RoleReviewer && actor.Role != constants.RoleAdmin {
-		return model.LocalizationCase{}, &AppError{CodeForbidden, http.StatusForbidden, "reviewer role is required to confirm a case", nil}
+		return model.LocalizationCase{}, &AppError{Code: CodeForbidden, Status: http.StatusForbidden, Message: "reviewer role is required to confirm a case"}
 	}
 	item, err := s.store.Cases.Get(id)
 	if errors.Is(err, repository.ErrNotFound) {

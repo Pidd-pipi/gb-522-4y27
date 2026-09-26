@@ -41,6 +41,19 @@ func (h *CaseHandler) Create(c *gin.Context) {
 	ok(c, http.StatusCreated, item, nil)
 }
 
+func (h *CaseHandler) Compatibility(c *gin.Context) {
+	var request dto.CaseCompatibilityRequest
+	if !bind(c, h.validate, &request) {
+		return
+	}
+	result, err := h.service.CheckCompatibility(request)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	ok(c, http.StatusOK, result, nil)
+}
+
 func (h *CaseHandler) Get(c *gin.Context) {
 	id, valid := idParam(c)
 	if !valid {

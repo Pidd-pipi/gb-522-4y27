@@ -31,7 +31,7 @@ docker compose down -v --remove-orphans
 - 线路档案：校验线路长度和折射率，查看历史轨迹，由 reviewer/admin 设置基线。
 - 轨迹分析：导入离线采样，记录去噪窗口、检测阈值和合并窗口，缩放真实 API 曲线。
 - 事件复核：按线路、类型和复核状态筛选，保留算法原值并单独保存人工修订。
-- 定位案例：执行基线差异比较，按 `draft -> analyzing -> pending_review -> confirmed -> closed` 流转。
+- 定位案例：建案例前核对波长、脉宽、采样间隔与采集时间顺序的适用性，执行基线差异比较，按 `draft -> analyzing -> pending_review -> confirmed -> closed` 流转。
 - 不可变审计：记录轨迹导入、基线变更、算法参数、事件修订、案例确认和关闭，携带 request ID 与前后值摘要。
 
 ## 技术栈与目录
@@ -85,6 +85,7 @@ frontend/src/pages                 五个业务页与登录页
 | `GET` | `/api/v1/events` | 事件筛选 |
 | `PATCH` | `/api/v1/events/:id/review` | 人工复核 |
 | `GET/POST` | `/api/v1/cases` | 案例列表/新建 |
+| `POST` | `/api/v1/cases/compatibility-check` | 建案例前的测量条件适用性预检 |
 | `GET` | `/api/v1/cases/:id` | 案例与差异 |
 | `POST` | `/api/v1/cases/:id/analyze` | 基线比对 |
 | `POST` | `/api/v1/cases/:id/confirm` | reviewer 确认 |
@@ -114,6 +115,7 @@ frontend/src/pages                 五个业务页与登录页
 3. 事件检测：一阶差分绝对值超过阈值的点为峰值，连续峰按窗口合并为幅度最大的一点。
 4. 距离公式：`distance = c * sample_index * sample_interval_ns * 1e-9 / (2 * refractive_index)`，其中 `c = 299792458 m/s`。超过线路长度的候选事件被拒绝。
 5. 基线比对：在距离容差内一对一最近匹配，输出新增、消失和损耗增大三类差异与置信度。
+6. 案例适用性：建立案例前逐条核对两条轨迹的波长（`wavelength_nm`）、脉宽（`pulse_width_ns`）和采样间隔（`sample_interval_ns`）必须完全一致，且当前轨迹 `captured_at` 严格晚于基线；任一项不符拒绝建立案例（`422 MEASUREMENT_CONDITIONS_INCOMPATIBLE`），响应 `error.details` 与 `POST /api/v1/cases/compatibility-check` 均逐项给出要求、实际值与说明。波长不同会使瑞利背向散射与损耗不可比，脉宽不同改变事件分辨宽度，采样间隔不同使距离网格不对齐。历史案例不受新校验影响，仍可正常读取和流转。
 
 状态迁移使用条件更新和 `version` 乐观锁。分析失败回到 `draft` 并保存错误；只有 reviewer/admin 能确认；关闭后不可修改。登录、轨迹导入和分析使用本地内存限流。访问日志不记录 JWT、密码、请求体或完整采样数组。
 
@@ -138,6 +140,7 @@ npm --prefix frontend run build
 - 前端 API 返回 502：确认 backend 为 `healthy`，Nginx 通过 Compose 服务名 `backend:8080` 连接。
 - 轨迹导入被拒绝：确认至少 16 点、无 NaN/Inf，采样范围覆盖线路至少 5%，且不超过 `MAX_TRACE_POINTS`。
 - 案例无法分析：基线和当前轨迹均需先执行事件检测。
+- 案例被拒绝建立（`MEASUREMENT_CONDITIONS_INCOMPATIBLE`）：两条轨迹波长、脉宽、采样间隔必须一致，且当前轨迹采集时间晚于基线；新建案例对话框会逐项展示不满足的条件。
 - 确认返回 `STATE_CONFLICT`：刷新案例取得最新 `version`，并确认状态为 `pending_review`。
 
 ## License

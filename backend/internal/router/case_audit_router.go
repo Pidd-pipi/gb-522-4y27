@@ -11,6 +11,7 @@ func registerCaseAuditRoutes(api *gin.RouterGroup, deps Dependencies) {
 	cases.GET("", deps.CaseHandler.List)
 	cases.GET("/:id", deps.CaseHandler.Get)
 	cases.POST("", appmw.RBACMiddleware(constants.RoleAnalyst, constants.RoleAdmin), deps.CaseHandler.Create)
+	cases.POST("/compatibility-check", appmw.RBACMiddleware(constants.RoleAnalyst, constants.RoleAdmin), deps.CaseHandler.Compatibility)
 	cases.POST("/:id/analyze", appmw.RateLimitMiddleware(deps.AnalyzeLimiter, "case_analysis"), appmw.RBACMiddleware(constants.RoleAnalyst, constants.RoleAdmin), deps.CaseHandler.Analyze)
 	cases.POST("/:id/confirm", appmw.RBACMiddleware(constants.RoleReviewer, constants.RoleAdmin), deps.CaseHandler.Confirm)
 	cases.POST("/:id/close", appmw.RBACMiddleware(constants.RoleReviewer, constants.RoleAdmin), deps.CaseHandler.Close)

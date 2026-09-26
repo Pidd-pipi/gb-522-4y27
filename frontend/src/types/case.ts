@@ -30,6 +30,32 @@ export interface Difference {
   confidence: number
 }
 
+export type CompatibilityField = 'wavelength_nm' | 'pulse_width_ns' | 'sample_interval_ns' | 'captured_after_baseline'
+
+export interface TraceMeasurement {
+  trace_id: number
+  route_id: number
+  wavelength_nm: number
+  pulse_width_ns: number
+  sample_interval_ns: number
+  captured_at: string
+}
+
+export interface CaseCompatibilityCheck {
+  field: CompatibilityField | string
+  passed: boolean
+  expected: string
+  actual: string
+  detail: string
+}
+
+export interface CaseCompatibility {
+  compatible: boolean
+  baseline: TraceMeasurement
+  current: TraceMeasurement
+  checks: CaseCompatibilityCheck[]
+}
+
 export const caseStatusLabel: Record<CaseStatus, string> = {
   draft: '草稿', analyzing: '分析中', pending_review: '待复核', confirmed: '已确认', closed: '已关闭',
 }
